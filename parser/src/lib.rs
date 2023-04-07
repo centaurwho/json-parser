@@ -1,31 +1,27 @@
 use nom::branch::alt;
-use nom::bytes::complete::tag;
+use nom::bytes::complete::{tag, take_while};
 use nom::character::complete::{char, one_of};
 use nom::combinator::{map, opt};
-use nom::multi::{fold_many1, many1};
-use nom::sequence::{delimited, pair, preceded, tuple};
-use nom::{Finish, IResult};
-
-struct Key;
-
-struct Value;
+use nom::multi::{fold_many1, many1, separated_list0};
+use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
+use nom::IResult;
 
 // TODO: Custom error handling
 
-#[allow(dead_code)]
-struct Json {
+#[derive(Debug, Eq, PartialEq)]
+pub struct Json {
     element: JsonElement,
-}
-
-impl Json {
-    fn parse(_inp: &str) -> Json {
-        unimplemented!()
-    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
 struct JsonElement {
     value: JsonValue,
+}
+
+impl JsonElement {
+    fn new(value: JsonValue) -> JsonElement {
+        JsonElement { value }
+    }
 }
 
 // TODO: Use an actual map.
@@ -40,15 +36,21 @@ enum JsonValue {
     Number(Number),
     Boolean(bool),
     Null,
-    // TODO: Find a way to discard this cleanly
+    // FIXME: Is this really necessary. Reconsider
+    Empty,
 }
 
-#[allow(dead_code)]
+pub fn parse(inp: &str) -> IResult<&str, Json> {
+    println!("inside parse");
+    map(parse_element, |elem| Json { element: elem })(inp)
+}
+
 fn parse_json_value(inp: &str) -> IResult<&str, JsonValue> {
+    println!("inside parse json value");
     alt((
         parse_json_object,
         parse_json_array,
-        parse_string,
+        map(parse_string, |s| JsonValue::JsonString(s)),
         parse_number,
         parse_null,
         parse_true,
@@ -56,35 +58,65 @@ fn parse_json_value(inp: &str) -> IResult<&str, JsonValue> {
     ))(inp)
 }
 
-fn parse_json_array(_inp: &str) -> IResult<&str, JsonValue> {
-    unimplemented!()
+fn parse_json_object(inp: &str) -> IResult<&str, JsonValue> {
+    println!("inside parse json object");
+    delimited(
+        char('{'),
+        alt((map(parse_whitespace, |_| JsonValue::Empty), parse_members)),
+        char('}'),
+    )(inp)
 }
 
-fn parse_string(_inp: &str) -> IResult<&str, JsonValue> {
-    unimplemented!()
+fn parse_members(inp: &str) -> IResult<&str, JsonValue> {
+    println!("inside parse json members: {:?}", inp);
+    map(separated_list0(char(','), parse_member), |e| {
+        JsonValue::JsonObject(e)
+    })(inp)
 }
 
-fn parse_json_object(_inp: &str) -> IResult<&str, JsonValue> {
-    // delimited(char('{'), alt((parse_whitespace, parse_members)), char('}'))(inp)
-    unimplemented!()
+fn parse_member(inp: &str) -> IResult<&str, Entry> {
+    println!("inside parse member: {:?}", inp);
+    map(
+        separated_pair(
+            delimited(opt(parse_whitespace), parse_string, opt(parse_whitespace)),
+            char(':'),
+            parse_element,
+        ),
+        |(s, v)| Entry(s, v),
+    )(inp)
 }
 
-fn parse_members(_inp: &str) -> IResult<&str, Vec<Entry>> {
-    unimplemented!()
-    // separated_list0(',', parse_member)(inp)
+fn parse_json_array(inp: &str) -> IResult<&str, JsonValue> {
+    delimited(
+        char('['),
+        alt((map(parse_whitespace, |_| JsonValue::Empty), parse_elements)),
+        char(']'),
+    )(inp)
 }
 
-fn parse_member(_inp: &str) -> IResult<&str, Entry> {
-    // map(separated_pair(parse_key, char(','), parse_element), |(val1, val2)| Entry(val1, val2))(inp)
-    unimplemented!()
+fn parse_elements(inp: &str) -> IResult<&str, JsonValue> {
+    map(separated_list0(char(','), parse_element), |l| {
+        JsonValue::JsonArray(l)
+    })(inp)
 }
 
-fn parse_key(_inp: &str) -> IResult<&str, JsonValue> {
-    unimplemented!()
+fn parse_element(inp: &str) -> IResult<&str, JsonElement> {
+    println!("inside parse element");
+    map(
+        delimited(opt(parse_whitespace), parse_json_value, opt(parse_whitespace)),
+        |jv| JsonElement::new(jv),
+    )(inp)
 }
 
-fn parse_element(_inp: &str) -> IResult<&str, JsonValue> {
-    unimplemented!()
+fn parse_string(inp: &str) -> IResult<&str, String> {
+    delimited(char('"'), parse_characters, char('"'))(inp)
+}
+
+// TODO: This is a shortcut. I just used the existing is_alphanumeric function here. Try to expand it
+fn parse_characters(inp: &str) -> IResult<&str, String> {
+    map(take_while(|c: char| c.is_alphanumeric()), |s| {
+        String::from(s)
+    })(inp)
 }
 
 fn parse_null(inp: &str) -> IResult<&str, JsonValue> {
@@ -97,10 +129,6 @@ fn parse_true(inp: &str) -> IResult<&str, JsonValue> {
 
 fn parse_false(inp: &str) -> IResult<&str, JsonValue> {
     map(tag("false"), |_| JsonValue::Boolean(false))(inp)
-}
-
-fn parse_value(inp: &str) -> IResult<&str, JsonValue> {
-    delimited(char('{'), parse_json_value, char('}'))(inp)
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -132,7 +160,7 @@ fn parse_integer(inp: &str) -> IResult<&str, i32> {
         Some('-') => -1,
         _ => 1,
     };
-     map(
+    map(
         alt((
             map(pair(parse_onenine, parse_digits), |(leading, rest)| {
                 // FIXME: I am not a fan of all these string conversions. Find a better way

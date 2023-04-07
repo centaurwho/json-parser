@@ -41,12 +41,10 @@ enum JsonValue {
 }
 
 pub fn parse(inp: &str) -> IResult<&str, Json> {
-    println!("inside parse");
     map(parse_element, |elem| Json { element: elem })(inp)
 }
 
 fn parse_json_value(inp: &str) -> IResult<&str, JsonValue> {
-    println!("inside parse json value");
     alt((
         parse_json_object,
         parse_json_array,
@@ -59,7 +57,6 @@ fn parse_json_value(inp: &str) -> IResult<&str, JsonValue> {
 }
 
 fn parse_json_object(inp: &str) -> IResult<&str, JsonValue> {
-    println!("inside parse json object");
     delimited(
         char('{'),
         alt((map(parse_whitespace, |_| JsonValue::Empty), parse_members)),
@@ -68,14 +65,12 @@ fn parse_json_object(inp: &str) -> IResult<&str, JsonValue> {
 }
 
 fn parse_members(inp: &str) -> IResult<&str, JsonValue> {
-    println!("inside parse json members: {:?}", inp);
     map(separated_list0(char(','), parse_member), |e| {
         JsonValue::JsonObject(e)
     })(inp)
 }
 
 fn parse_member(inp: &str) -> IResult<&str, Entry> {
-    println!("inside parse member: {:?}", inp);
     map(
         separated_pair(
             delimited(opt(parse_whitespace), parse_string, opt(parse_whitespace)),
@@ -101,9 +96,12 @@ fn parse_elements(inp: &str) -> IResult<&str, JsonValue> {
 }
 
 fn parse_element(inp: &str) -> IResult<&str, JsonElement> {
-    println!("inside parse element");
     map(
-        delimited(opt(parse_whitespace), parse_json_value, opt(parse_whitespace)),
+        delimited(
+            opt(parse_whitespace),
+            parse_json_value,
+            opt(parse_whitespace),
+        ),
         |jv| JsonElement::new(jv),
     )(inp)
 }
@@ -134,6 +132,7 @@ fn parse_false(inp: &str) -> IResult<&str, JsonValue> {
 #[derive(Debug, Eq, PartialEq)]
 struct Hex(u32);
 
+#[allow(dead_code)]
 fn parse_hex(inp: &str) -> IResult<&str, Hex> {
     map(
         alt((
@@ -189,7 +188,8 @@ fn parse_onenine(inp: &str) -> IResult<&str, u32> {
     map(one_of("123456789"), |c| c.to_digit(10).unwrap())(inp)
 }
 
-// TODO: Change this representation. Storing this as f32 could make more sense
+// TODO: Change this representation. Storing this as f32 could make more sense. Then the problem is
+//  precision. It may be better to do the conversion when needed.
 #[derive(Debug, Eq, PartialEq)]
 struct Fraction(u32);
 
@@ -200,11 +200,14 @@ fn parse_fraction(inp: &str) -> IResult<&str, Fraction> {
 #[derive(Debug, Eq, PartialEq)]
 struct Exponent(Sign, u32);
 
-// TODO: sign should be optional
 fn parse_exponent(inp: &str) -> IResult<&str, Exponent> {
     map(
-        preceded(alt((char('e'), char('E'))), pair(parse_sign, parse_digits)),
-        |(sign, digits)| Exponent(sign, digits),
+        preceded(
+            alt((char('e'), char('E'))),
+            pair(opt(parse_sign), parse_digits),
+        ),
+        // Default is Sign::Plus
+        |(sign, digits)| Exponent(sign.unwrap_or(Sign::Plus), digits),
     )(inp)
 }
 
@@ -225,15 +228,8 @@ fn parse_sign(inp: &str) -> IResult<&str, Sign> {
 struct WhiteSpace;
 
 fn parse_whitespace(inp: &str) -> IResult<&str, WhiteSpace> {
-    map(
-        many1(alt((
-            char('\u{0020}'),
-            char('\u{000A}'),
-            char('\u{000D}'),
-            char('\u{0009}'),
-        ))),
-        |_| WhiteSpace,
-    )(inp)
+    let ws_characters: &[char] = &['\u{0020}', '\u{000A}', '\u{000D}', '\u{0009}'];
+    map(many1(one_of(ws_characters)), |_| WhiteSpace)(inp)
 }
 
 #[cfg(test)]
@@ -242,6 +238,23 @@ mod test {
     use nom::Err;
 
     use super::*;
+
+    #[test]
+    fn test_parse_string() {
+        assert_eq!(Ok(("", String::from("rope"))), parse_string("\"rope\""));
+        assert_eq!(
+            Ok(("", String::from("these are very nice characters"))),
+            parse_string("\"these are very nice characters\"")
+        );
+        assert_eq!(
+            Ok(("", String::from("ohhhh numbers!!! 6767672187912"))),
+            parse_string("\"ohhhh numbers!!! 6767672187912\"")
+        );
+        assert_eq!(
+            Ok(("", String::from("i have escaped \""))),
+            parse_string("\"i have escaped \\\"\"")
+        );
+    }
 
     #[test]
     fn test_parse_null() {
@@ -405,6 +418,7 @@ mod test {
             Ok(("A", Exponent(Sign::Minus, 2222))),
             parse_exponent("e-2222A")
         );
+        assert_eq!(Ok(("", Exponent(Sign::Plus, 421))), parse_exponent("e421"));
         assert_eq!(
             Err(Err::Error(error_position!(
                 "A+36",
@@ -415,7 +429,7 @@ mod test {
         assert_eq!(
             Err(Err::Error(error_position!(
                 "*36",
-                nom::error::ErrorKind::Char
+                nom::error::ErrorKind::Many1
             ))),
             parse_exponent("e*36")
         );
@@ -449,9 +463,14 @@ mod test {
         assert_eq!(
             Err(Err::Error(error_position!(
                 "a",
-                nom::error::ErrorKind::Char
+                nom::error::ErrorKind::OneOf
             ))),
             parse_whitespace("a")
         );
+    }
+
+    #[test]
+    fn test() {
+        println!("{:?}", ".123".parse::<f32>())
     }
 }

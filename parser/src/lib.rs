@@ -132,10 +132,7 @@ fn parse_integer(inp: &str) -> IResult<&str, i32> {
         Some('-') => -1,
         _ => 1,
     };
-    // FIXME: We currently need to declare this `parser` variable first, then return it; instead
-    //  of just returning the expression directly. It looks like `sign_coef' doesn't live long
-    //  enough and i don't think making it a reference is a clean solution.
-    let parser = map(
+     map(
         alt((
             map(pair(parse_onenine, parse_digits), |(leading, rest)| {
                 // FIXME: I am not a fan of all these string conversions. Find a better way
@@ -146,9 +143,8 @@ fn parse_integer(inp: &str) -> IResult<&str, i32> {
             }),
             parse_digit,
         )),
-        |v| (v as i32) * sign_coef,
-    )(inp);
-    parser
+        move |v| (v as i32) * sign_coef,
+    )(inp)
 }
 
 fn parse_digits(inp: &str) -> IResult<&str, u32> {

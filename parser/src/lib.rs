@@ -1,8 +1,8 @@
 use nom::branch::alt;
-use nom::bytes::complete::{tag, take_while};
-use nom::character::complete::{char, one_of};
-use nom::combinator::{map, opt};
-use nom::multi::{fold_many1, many1, separated_list0};
+use nom::bytes::complete::tag;
+use nom::character::complete::{char, one_of, satisfy};
+use nom::combinator::{map, opt, value};
+use nom::multi::{count, fold_many1, many0, many1, separated_list0};
 use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
 use nom::IResult;
 
@@ -54,6 +54,18 @@ fn parse_json_value(inp: &str) -> IResult<&str, JsonValue> {
         parse_true,
         parse_false,
     ))(inp)
+}
+
+fn parse_null(inp: &str) -> IResult<&str, JsonValue> {
+    map(tag("null"), |_| JsonValue::Null)(inp)
+}
+
+fn parse_true(inp: &str) -> IResult<&str, JsonValue> {
+    map(tag("true"), |_| JsonValue::Boolean(true))(inp)
+}
+
+fn parse_false(inp: &str) -> IResult<&str, JsonValue> {
+    map(tag("false"), |_| JsonValue::Boolean(false))(inp)
 }
 
 fn parse_json_object(inp: &str) -> IResult<&str, JsonValue> {
@@ -110,35 +122,44 @@ fn parse_string(inp: &str) -> IResult<&str, String> {
     delimited(char('"'), parse_characters, char('"'))(inp)
 }
 
-// TODO: This is a shortcut. I just used the existing is_alphanumeric function here. Try to expand it
 fn parse_characters(inp: &str) -> IResult<&str, String> {
-    map(take_while(|c: char| c.is_alphanumeric()), |s| {
-        String::from(s)
-    })(inp)
+    map(many0(parse_character), |v| v.into_iter().collect())(inp)
 }
 
-fn parse_null(inp: &str) -> IResult<&str, JsonValue> {
-    map(tag("null"), |_| JsonValue::Null)(inp)
+fn parse_character(inp: &str) -> IResult<&str, char> {
+    alt((satisfy(|c: char| is_valid_char(c)), parse_escaped))(inp)
 }
 
-fn parse_true(inp: &str) -> IResult<&str, JsonValue> {
-    map(tag("true"), |_| JsonValue::Boolean(true))(inp)
+fn is_valid_char(c: char) -> bool {
+    let valid_range = '\u{0020}'..'\u{ffff}';
+    valid_range.contains(&c) && c != '"' && c != '\\'
 }
 
-fn parse_false(inp: &str) -> IResult<&str, JsonValue> {
-    map(tag("false"), |_| JsonValue::Boolean(false))(inp)
+fn parse_escaped(inp: &str) -> IResult<&str, char> {
+    alt((
+        value('\u{0022}', tag("\\\"")),
+        value('\u{005c}', tag("\\\\")),
+        value('\u{002f}', tag("\\/")),
+        value('\u{2408}', tag("\\b")),
+        value('\u{000c}', tag("\\f")),
+        value('\n', tag("\\n")),
+        value('\r', tag("\\r")),
+        value('\t', tag("\\t")),
+        map(preceded(tag("\\u"), count(parse_hex, 4)), |a| {
+            let s: String = a.into_iter().map(|h| h.0).collect();
+            let code_point = u32::from_str_radix(&s, 16).unwrap();
+            char::from_u32(code_point).unwrap()
+        }),
+    ))(inp)
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct Hex(u32);
+struct Hex(char);
 
 #[allow(dead_code)]
 fn parse_hex(inp: &str) -> IResult<&str, Hex> {
     map(
-        alt((
-            parse_digit,
-            map(one_of("abcdefABCDEF"), |v: char| v.to_digit(16).unwrap()),
-        )),
+        alt((parse_digit, map(one_of("abcdefABCDEF"), |v: char| v))),
         Hex,
     )(inp)
 }
@@ -168,24 +189,26 @@ fn parse_integer(inp: &str) -> IResult<&str, i32> {
                 rest_str.insert_str(0, &leading_str);
                 rest_str.parse::<u32>().unwrap()
             }),
-            parse_digit,
+            map(parse_digit, |d: char| d.to_digit(10).unwrap()),
         )),
         move |v| (v as i32) * sign_coef,
     )(inp)
 }
 
 fn parse_digits(inp: &str) -> IResult<&str, u32> {
-    fold_many1(parse_digit, || 0, |acc, val| acc * 10 + val)(inp)
+    fold_many1(
+        parse_digit,
+        || 0,
+        |acc, val: char| acc * 10 + val.to_digit(10).unwrap(),
+    )(inp)
 }
 
-// FIXME: Find a way to return char instead of u32. Currently `char(..)` function and
-//  the type `char` have a name conflict.
-fn parse_digit(inp: &str) -> IResult<&str, u32> {
-    alt((map(char('0'), |c| c.to_digit(10).unwrap()), parse_onenine))(inp)
+fn parse_digit(inp: &str) -> IResult<&str, char> {
+    alt((char('0'), parse_onenine))(inp)
 }
 
-fn parse_onenine(inp: &str) -> IResult<&str, u32> {
-    map(one_of("123456789"), |c| c.to_digit(10).unwrap())(inp)
+fn parse_onenine(inp: &str) -> IResult<&str, char> {
+    one_of("123456789")(inp)
 }
 
 // TODO: Change this representation. Storing this as f32 could make more sense. Then the problem is
@@ -251,8 +274,8 @@ mod test {
             parse_string("\"ohhhh numbers!!! 6767672187912\"")
         );
         assert_eq!(
-            Ok(("", String::from("i have escaped \""))),
-            parse_string("\"i have escaped \\\"\"")
+            Ok(("", String::from("ooh i \n am / escaping \""))),
+            parse_string("\"ooh i \\n am \\/ escaping \\\"\"")
         );
     }
 
@@ -306,9 +329,9 @@ mod test {
 
     #[test]
     fn test_parse_hex() {
-        assert_eq!(Ok(("", Hex(10))), parse_hex("a"));
-        assert_eq!(Ok(("BC", Hex(10))), parse_hex("ABC"));
-        assert_eq!(Ok(("6", Hex(2))), parse_hex("26"));
+        assert_eq!(Ok(("", Hex('a'))), parse_hex("a"));
+        assert_eq!(Ok(("BC", Hex('A'))), parse_hex("ABC"));
+        assert_eq!(Ok(("6", Hex('2'))), parse_hex("26"));
         assert_eq!(
             Err(Err::Error(error_position!(
                 "KLM",
@@ -380,8 +403,8 @@ mod test {
 
     #[test]
     fn test_parse_digit() {
-        assert_eq!(Ok(("45", 3)), parse_digit("345"));
-        assert_eq!(Ok(("002", 0)), parse_digit("0002"));
+        assert_eq!(Ok(("45", '3')), parse_digit("345"));
+        assert_eq!(Ok(("002", '0')), parse_digit("0002"));
         assert_eq!(
             Err(Err::Error(error_position!(
                 "words",
@@ -467,10 +490,5 @@ mod test {
             ))),
             parse_whitespace("a")
         );
-    }
-
-    #[test]
-    fn test() {
-        println!("{:?}", ".123".parse::<f32>())
     }
 }

@@ -4,9 +4,9 @@ use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::{char, one_of, satisfy};
 use nom::combinator::{map, opt, value};
-use nom::IResult;
 use nom::multi::{count, fold_many1, many0, many1, separated_list0};
 use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
+use nom::IResult;
 
 // TODO: Custom error handling
 
@@ -83,13 +83,10 @@ fn parse_members(inp: &str) -> IResult<&str, JsonValue> {
 }
 
 fn parse_member(inp: &str) -> IResult<&str, (String, JsonElement)> {
-    map(
-        separated_pair(
-            delimited(opt(parse_whitespace), parse_string, opt(parse_whitespace)),
-            char(':'),
-            parse_element,
-        ),
-        |(s, v)| (s, v),
+    separated_pair(
+        delimited(opt(parse_whitespace), parse_string, opt(parse_whitespace)),
+        char(':'),
+        parse_element,
     )(inp)
 }
 
@@ -159,7 +156,6 @@ fn parse_escaped(inp: &str) -> IResult<&str, char> {
 #[derive(Debug, Eq, PartialEq)]
 struct Hex(char);
 
-#[allow(dead_code)]
 fn parse_hex(inp: &str) -> IResult<&str, Hex> {
     map(
         alt((parse_digit, map(one_of("abcdefABCDEF"), |v: char| v))),
@@ -237,31 +233,28 @@ fn parse_exponent(inp: &str) -> IResult<&str, Exponent> {
     )(inp)
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 enum Sign {
     Plus,
     Minus,
 }
 
 fn parse_sign(inp: &str) -> IResult<&str, Sign> {
-    alt((
-        map(char('+'), |_| Sign::Plus),
-        map(char('-'), |_| Sign::Minus),
-    ))(inp)
+    alt((value(Sign::Plus, char('+')), value(Sign::Minus, char('-'))))(inp)
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 struct WhiteSpace;
 
 fn parse_whitespace(inp: &str) -> IResult<&str, WhiteSpace> {
     let ws_characters: &[char] = &['\u{0020}', '\u{000A}', '\u{000D}', '\u{0009}'];
-    map(many1(one_of(ws_characters)), |_| WhiteSpace)(inp)
+    value(WhiteSpace, many1(one_of(ws_characters)))(inp)
 }
 
 #[cfg(test)]
 mod test {
-    use nom::Err;
     use nom::error_position;
+    use nom::Err;
 
     use super::*;
 

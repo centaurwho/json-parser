@@ -4,9 +4,9 @@ use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::{char, one_of, satisfy};
 use nom::combinator::{map, opt, value};
+use nom::IResult;
 use nom::multi::{count, fold_many1, many0, many1, separated_list0};
 use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
-use nom::IResult;
 
 // TODO: Custom error handling
 
@@ -37,7 +37,11 @@ enum JsonValue {
 }
 
 pub fn parse(inp: &str) -> IResult<&str, Json> {
-    map(parse_element, |elem| Json { element: elem })(inp)
+    map(parse_root, |v| Json { element: JsonElement::new(v) })(inp)
+}
+
+fn parse_root(inp: &str) -> IResult<&str, JsonValue> {
+    alt((parse_json_object, parse_json_array))(inp)
 }
 
 fn parse_json_value(inp: &str) -> IResult<&str, JsonValue> {
@@ -250,9 +254,9 @@ fn parse_whitespace(inp: &str) -> IResult<&str, WhiteSpace> {
 
 #[cfg(test)]
 mod test {
+    use nom::Err;
     use nom::error::ErrorKind;
     use nom::error_position;
-    use nom::Err;
 
     use super::*;
 

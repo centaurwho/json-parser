@@ -157,10 +157,7 @@ fn parse_escaped(inp: &str) -> IResult<&str, char> {
 struct Hex(char);
 
 fn parse_hex(inp: &str) -> IResult<&str, Hex> {
-    map(
-        alt((parse_digit, map(one_of("abcdefABCDEF"), |v: char| v))),
-        Hex,
-    )(inp)
+    map(alt((parse_digit, one_of("abcdefABCDEF"))), Hex)(inp)
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -253,26 +250,20 @@ fn parse_whitespace(inp: &str) -> IResult<&str, WhiteSpace> {
 
 #[cfg(test)]
 mod test {
+    use nom::error::ErrorKind;
     use nom::error_position;
     use nom::Err;
 
     use super::*;
 
-    #[test]
-    fn test_parse_string() {
-        assert_eq!(Ok(("", String::from("rope"))), parse_string("\"rope\""));
-        assert_eq!(
-            Ok(("", String::from("these are very nice characters"))),
-            parse_string("\"these are very nice characters\"")
-        );
-        assert_eq!(
-            Ok(("", String::from("ohhhh numbers!!! 6767672187912"))),
-            parse_string("\"ohhhh numbers!!! 6767672187912\"")
-        );
-        assert_eq!(
-            Ok(("", String::from("ooh i \n am / escaping \""))),
-            parse_string("\"ooh i \\n am \\/ escaping \\\"\"")
-        );
+    macro_rules! is_enum_variant {
+        ($v:expr, $p:pat) => {
+            if let $p = $v {
+                true
+            } else {
+                false
+            }
+        };
     }
 
     #[test]
@@ -320,6 +311,103 @@ mod test {
                 nom::error::ErrorKind::Tag
             ))),
             parse_false("true")
+        );
+    }
+
+    #[test]
+    fn test_parse_json_object() {
+        // Empty object
+        assert_eq!(
+            Ok(("", JsonValue::JsonObject(HashMap::new()))),
+            parse_json_object("{}")
+        );
+
+        // Object with a single key value
+        let val = parse_json_object("{\"key1\": 67}").unwrap().1;
+        assert!(is_enum_variant!(val, JsonValue::JsonObject(_)));
+        if let JsonValue::JsonObject(map) = val {
+            assert_eq!(1, map.len());
+            assert_eq!(
+                JsonValue::Number(Number(67, None, None)),
+                map.get("key1").unwrap().value
+            );
+        }
+
+        // Nested object with multiple members
+        let val = parse_json_object(
+            "{\"key1\": {\"inner_key1\": \"val\", \"inner_key2\": 1e-5}, \"key2\": true}",
+        )
+        .unwrap()
+        .1;
+        println!("{:#?}", val);
+        assert!(is_enum_variant!(val, JsonValue::JsonObject(_)));
+        if let JsonValue::JsonObject(map) = val {
+            assert_eq!(2, map.len());
+
+            assert!(map.contains_key("key1"));
+            let obj1 = &map.get("key1").unwrap().value;
+            assert!(is_enum_variant!(obj1, JsonValue::JsonObject(_)));
+            if let JsonValue::JsonObject(inner_map) = obj1 {
+                assert_eq!(2, inner_map.len());
+                assert_eq!(
+                    JsonValue::JsonString(String::from("val")),
+                    inner_map.get("inner_key1").unwrap().value
+                );
+                assert_eq!(
+                    JsonValue::Number(Number(1, None, Some(Exponent(Sign::Minus, 5)))),
+                    inner_map.get("inner_key2").unwrap().value
+                );
+            }
+            assert_eq!(JsonValue::Boolean(true), map.get("key2").unwrap().value);
+        }
+
+        assert_eq!(
+            Err(Err::Error(error_position!("[]", ErrorKind::Char))),
+            parse_json_object("[]")
+        );
+    }
+
+    #[test]
+    fn test_parse_json_array() {
+        // Empty array
+        assert_eq!(
+            Ok(("", JsonValue::JsonArray(Vec::new()))),
+            parse_json_array("[]")
+        );
+
+        // Simple json array
+        let arr = parse_json_array("[12.3, \"sss\", {}]").unwrap().1;
+        assert!(is_enum_variant!(arr, JsonValue::JsonArray(_)));
+        if let JsonValue::JsonArray(v) = arr {
+            assert_eq!(
+                vec![
+                    JsonElement::new(JsonValue::Number(Number(12, Some(Fraction(3)), None))),
+                    JsonElement::new(JsonValue::JsonString(String::from("sss"))),
+                    JsonElement::new(JsonValue::JsonObject(HashMap::new())),
+                ],
+                v
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_string() {
+        assert_eq!(Ok(("", String::from("rope"))), parse_string("\"rope\""));
+        assert_eq!(
+            Ok(("", String::from("these are very nice characters"))),
+            parse_string("\"these are very nice characters\"")
+        );
+        assert_eq!(
+            Ok(("", String::from("ohhhh numbers!!! 6767672187912"))),
+            parse_string("\"ohhhh numbers!!! 6767672187912\"")
+        );
+        assert_eq!(
+            Ok(("", String::from("ooh i \n am / escaping \""))),
+            parse_string("\"ooh i \\n am \\/ escaping \\\"\"")
+        );
+        assert_eq!(
+            Err(Err::Error(error_position!("123", ErrorKind::Char))),
+            parse_string("123")
         );
     }
 

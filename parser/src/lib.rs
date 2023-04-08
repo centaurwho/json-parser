@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::{char, one_of, satisfy};
 use nom::combinator::{map, opt, value};
+use nom::IResult;
 use nom::multi::{count, fold_many1, many0, many1, separated_list0};
 use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
-use nom::IResult;
 
 // TODO: Custom error handling
 
@@ -24,20 +26,14 @@ impl JsonElement {
     }
 }
 
-// TODO: Use an actual map.
-#[derive(Debug, Eq, PartialEq)]
-struct Entry(String, JsonElement);
-
 #[derive(Debug, Eq, PartialEq)]
 enum JsonValue {
-    JsonObject(Vec<Entry>),
+    JsonObject(HashMap<String, JsonElement>),
     JsonArray(Vec<JsonElement>),
     JsonString(String),
     Number(Number),
     Boolean(bool),
     Null,
-    // FIXME: Is this really necessary. Reconsider
-    Empty,
 }
 
 pub fn parse(inp: &str) -> IResult<&str, Json> {
@@ -48,7 +44,7 @@ fn parse_json_value(inp: &str) -> IResult<&str, JsonValue> {
     alt((
         parse_json_object,
         parse_json_array,
-        map(parse_string, |s| JsonValue::JsonString(s)),
+        map(parse_string, JsonValue::JsonString),
         parse_number,
         parse_null,
         parse_true,
@@ -71,32 +67,39 @@ fn parse_false(inp: &str) -> IResult<&str, JsonValue> {
 fn parse_json_object(inp: &str) -> IResult<&str, JsonValue> {
     delimited(
         char('{'),
-        alt((map(parse_whitespace, |_| JsonValue::Empty), parse_members)),
+        alt((
+            map(parse_whitespace, |_| JsonValue::JsonObject(HashMap::new())),
+            parse_members,
+        )),
         char('}'),
     )(inp)
 }
 
 fn parse_members(inp: &str) -> IResult<&str, JsonValue> {
     map(separated_list0(char(','), parse_member), |e| {
-        JsonValue::JsonObject(e)
+        let obj_map = e.into_iter().collect();
+        JsonValue::JsonObject(obj_map)
     })(inp)
 }
 
-fn parse_member(inp: &str) -> IResult<&str, Entry> {
+fn parse_member(inp: &str) -> IResult<&str, (String, JsonElement)> {
     map(
         separated_pair(
             delimited(opt(parse_whitespace), parse_string, opt(parse_whitespace)),
             char(':'),
             parse_element,
         ),
-        |(s, v)| Entry(s, v),
+        |(s, v)| (s, v),
     )(inp)
 }
 
 fn parse_json_array(inp: &str) -> IResult<&str, JsonValue> {
     delimited(
         char('['),
-        alt((map(parse_whitespace, |_| JsonValue::Empty), parse_elements)),
+        alt((
+            map(parse_whitespace, |_| JsonValue::JsonObject(HashMap::new())),
+            parse_elements,
+        )),
         char(']'),
     )(inp)
 }
@@ -114,7 +117,7 @@ fn parse_element(inp: &str) -> IResult<&str, JsonElement> {
             parse_json_value,
             opt(parse_whitespace),
         ),
-        |jv| JsonElement::new(jv),
+        JsonElement::new,
     )(inp)
 }
 
@@ -127,7 +130,7 @@ fn parse_characters(inp: &str) -> IResult<&str, String> {
 }
 
 fn parse_character(inp: &str) -> IResult<&str, char> {
-    alt((satisfy(|c: char| is_valid_char(c)), parse_escaped))(inp)
+    alt((satisfy(is_valid_char), parse_escaped))(inp)
 }
 
 fn is_valid_char(c: char) -> bool {
@@ -257,8 +260,8 @@ fn parse_whitespace(inp: &str) -> IResult<&str, WhiteSpace> {
 
 #[cfg(test)]
 mod test {
-    use nom::error_position;
     use nom::Err;
+    use nom::error_position;
 
     use super::*;
 

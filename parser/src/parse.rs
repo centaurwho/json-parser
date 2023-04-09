@@ -8,36 +8,12 @@ use nom::IResult;
 use nom::multi::{count, fold_many1, many0, many1, separated_list0};
 use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
 
+use crate::value::{Exponent, Fraction, Hex, Json, JsonElement, JsonValue, Number, Sign};
+
 // TODO: Custom error handling
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct Json {
-    element: JsonElement,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct JsonElement {
-    value: JsonValue,
-}
-
-impl JsonElement {
-    fn new(value: JsonValue) -> JsonElement {
-        JsonElement { value }
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-enum JsonValue {
-    JsonObject(HashMap<String, JsonElement>),
-    JsonArray(Vec<JsonElement>),
-    JsonString(String),
-    Number(Number),
-    Boolean(bool),
-    Null,
-}
-
 pub fn parse(inp: &str) -> IResult<&str, Json> {
-    map(parse_root, |v| Json { element: JsonElement::new(v) })(inp)
+    map(parse_root, |v| Json::new(v))(inp)
 }
 
 fn parse_root(inp: &str) -> IResult<&str, JsonValue> {
@@ -157,20 +133,14 @@ fn parse_escaped(inp: &str) -> IResult<&str, char> {
     ))(inp)
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct Hex(char);
-
 fn parse_hex(inp: &str) -> IResult<&str, Hex> {
     map(alt((parse_digit, one_of("abcdefABCDEF"))), Hex)(inp)
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct Number(i32, Option<Fraction>, Option<Exponent>);
-
 fn parse_number(inp: &str) -> IResult<&str, JsonValue> {
     map(
         tuple((parse_integer, opt(parse_fraction), opt(parse_exponent))),
-        |(n, f, exp)| JsonValue::Number(Number(n, f, exp)),
+        |(n, f, exp)| JsonValue::Number(Number::new(n, f, exp)),
     )(inp)
 }
 
@@ -211,17 +181,9 @@ fn parse_onenine(inp: &str) -> IResult<&str, char> {
     one_of("123456789")(inp)
 }
 
-// TODO: Change this representation. Storing this as f32 could make more sense. Then the problem is
-//  precision. It may be better to do the conversion when needed.
-#[derive(Debug, Eq, PartialEq)]
-struct Fraction(u32);
-
 fn parse_fraction(inp: &str) -> IResult<&str, Fraction> {
     map(preceded(char('.'), parse_digits), Fraction)(inp)
 }
-
-#[derive(Debug, Eq, PartialEq)]
-struct Exponent(Sign, u32);
 
 fn parse_exponent(inp: &str) -> IResult<&str, Exponent> {
     map(
@@ -230,14 +192,8 @@ fn parse_exponent(inp: &str) -> IResult<&str, Exponent> {
             pair(opt(parse_sign), parse_digits),
         ),
         // Default is Sign::Plus
-        |(sign, digits)| Exponent(sign.unwrap_or(Sign::Plus), digits),
+        |(sign, digits)| Exponent::new(sign.unwrap_or(Sign::Plus), digits),
     )(inp)
-}
-
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-enum Sign {
-    Plus,
-    Minus,
 }
 
 fn parse_sign(inp: &str) -> IResult<&str, Sign> {
@@ -332,7 +288,7 @@ mod test {
         if let JsonValue::JsonObject(map) = val {
             assert_eq!(1, map.len());
             assert_eq!(
-                JsonValue::Number(Number(67, None, None)),
+                JsonValue::Number(Number::new(67, None, None)),
                 map.get("key1").unwrap().value
             );
         }
@@ -343,7 +299,6 @@ mod test {
         )
         .unwrap()
         .1;
-        println!("{:#?}", val);
         assert!(is_enum_variant!(val, JsonValue::JsonObject(_)));
         if let JsonValue::JsonObject(map) = val {
             assert_eq!(2, map.len());
@@ -358,7 +313,7 @@ mod test {
                     inner_map.get("inner_key1").unwrap().value
                 );
                 assert_eq!(
-                    JsonValue::Number(Number(1, None, Some(Exponent(Sign::Minus, 5)))),
+                    JsonValue::Number(Number::new(1, None, Some(Exponent::new(Sign::Minus, 5)))),
                     inner_map.get("inner_key2").unwrap().value
                 );
             }
@@ -385,7 +340,7 @@ mod test {
         if let JsonValue::JsonArray(v) = arr {
             assert_eq!(
                 vec![
-                    JsonElement::new(JsonValue::Number(Number(12, Some(Fraction(3)), None))),
+                    JsonElement::new(JsonValue::Number(Number::new(12, Some(Fraction(3)), None))),
                     JsonElement::new(JsonValue::JsonString(String::from("sss"))),
                     JsonElement::new(JsonValue::JsonObject(HashMap::new())),
                 ],
@@ -432,24 +387,31 @@ mod test {
     #[test]
     fn test_parse_number() {
         assert_eq!(
-            Ok(("", JsonValue::Number(Number(56172, None, None)))),
+            Ok(("", JsonValue::Number(Number::new(56172, None, None)))),
             parse_number("56172")
         );
         assert_eq!(
-            Ok(("", JsonValue::Number(Number(123, Some(Fraction(98)), None)))),
+            Ok((
+                "",
+                JsonValue::Number(Number::new(123, Some(Fraction(98)), None))
+            )),
             parse_number("123.98")
         );
         assert_eq!(
             Ok((
                 "",
-                JsonValue::Number(Number(167, None, Some(Exponent(Sign::Minus, 12))))
+                JsonValue::Number(Number::new(167, None, Some(Exponent::new(Sign::Minus, 12))))
             )),
             parse_number("167e-12")
         );
         assert_eq!(
             Ok((
                 "",
-                JsonValue::Number(Number(1, Some(Fraction(2)), Some(Exponent(Sign::Plus, 3))))
+                JsonValue::Number(Number::new(
+                    1,
+                    Some(Fraction(2)),
+                    Some(Exponent::new(Sign::Plus, 3))
+                ))
             )),
             parse_number("1.2e+3")
         );
@@ -524,12 +486,12 @@ mod test {
 
     #[test]
     fn test_parse_exponent() {
-        assert_eq!(Ok(("", Exponent(Sign::Plus, 36))), parse_exponent("E+36"));
+        assert_eq!(Ok(("", Exponent::new(Sign::Plus, 36))), parse_exponent("E+36"));
         assert_eq!(
-            Ok(("A", Exponent(Sign::Minus, 2222))),
+            Ok(("A", Exponent::new(Sign::Minus, 2222))),
             parse_exponent("e-2222A")
         );
-        assert_eq!(Ok(("", Exponent(Sign::Plus, 421))), parse_exponent("e421"));
+        assert_eq!(Ok(("", Exponent::new(Sign::Plus, 421))), parse_exponent("e421"));
         assert_eq!(
             Err(Err::Error(error_position!(
                 "A+36",

@@ -1,6 +1,7 @@
-use crate::lib::parse;
+use crate::parse::parse;
 
-mod lib;
+mod parse;
+mod value;
 
 const JSON_STR: &str = "{\"key1\": {\"inner1\": 0}, \"key2\": [12, 23, 34]}";
 

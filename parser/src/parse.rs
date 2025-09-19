@@ -133,8 +133,8 @@ fn parse_escaped(inp: &str) -> IResult<&str, char> {
         value('\r', tag("\\r")),
         value('\t', tag("\\t")),
         map(preceded(tag("\\u"), count(parse_hex, 4)), |a| {
-            let s: String = a.into_iter().map(|h| h.0).collect();
-            let code_point = u32::from_str_radix(&s, 16).unwrap();
+            let code_point =
+                u32::from_str_radix(&a.iter().map(|h| h.0).collect::<String>(), 16).unwrap();
             char::from_u32(code_point).unwrap()
         }),
     ))
@@ -277,7 +277,10 @@ mod test {
             Ok(("", JsonValue::JsonObject(HashMap::new()))),
             parse_json_object("{}")
         );
-
+        assert_eq!(
+            Ok(("", JsonValue::JsonObject(HashMap::new()))),
+            parse_json_object("{\n\t\r }")
+        );
         // Object with a single key value
         let val = parse_json_object("{\"key1\": 67}").unwrap().1;
         assert!(is_enum_variant!(val, JsonValue::JsonObject(_)));
@@ -315,10 +318,13 @@ mod test {
             }
             assert_eq!(JsonValue::Boolean(true), map.get("key2").unwrap().value);
         }
-
         assert_eq!(
             Err(Err::Error(error_position!("[]", ErrorKind::Char))),
             parse_json_object("[]")
+        );
+        assert_eq!(
+            Err(Err::Error(error_position!("\"key\": 12}", ErrorKind::Char))),
+            parse_json_object("\"key\": 12}")
         );
     }
 
@@ -343,6 +349,22 @@ mod test {
                 v
             );
         }
+        // Nested json array
+        let arr = parse_json_array("[12, [true, false]]").unwrap().1;
+        assert!(is_enum_variant!(arr, JsonValue::JsonArray(_)));
+        if let JsonValue::JsonArray(v) = arr {
+            assert_eq!(2, v.len());
+            assert_eq!(
+                JsonElement::new(JsonValue::Number(Number::new(12, None, None))),
+                v[0]
+            );
+            assert!(is_enum_variant!(v[1].value, JsonValue::JsonArray(_)));
+            if let JsonValue::JsonArray(inner_arr) = &v[1].value {
+                assert_eq!(2, inner_arr.len());
+                assert_eq!(JsonElement::new(JsonValue::Boolean(true)), inner_arr[0]);
+                assert_eq!(JsonElement::new(JsonValue::Boolean(false)), inner_arr[1]);
+            }
+        }
     }
 
     #[test]
@@ -363,6 +385,11 @@ mod test {
         assert_eq!(
             Err(Err::Error(error_position!("123", ErrorKind::Char))),
             parse_string("123")
+        );
+        // Incomplete string still is consumed up to the end of input
+        assert_eq!(
+            Err(Err::Error(error_position!("", ErrorKind::Char))),
+            parse_string("\"incomplete")
         );
     }
 
@@ -407,6 +434,17 @@ mod test {
                 ))
             )),
             parse_number("1.2e+3")
+        );
+        assert_eq!(
+            Ok((
+                "",
+                JsonValue::Number(Number::new(
+                    -45,
+                    Some(Fraction(6789)),
+                    Some(Exponent::new(Sign::Minus, 10))
+                ))
+            )),
+            parse_number("-45.6789e-10")
         );
         assert_eq!(
             Err(Err::Error(error_position!("notanumber", ErrorKind::OneOf))),

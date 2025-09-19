@@ -7,7 +7,8 @@ const JSON_STR: &str = "{\"key1\": {\"inner1\": 0}, \"key2\": [12, 23, 34]}";
 
 fn main() {
     let parsed = parse(JSON_STR);
-    println!("{:#?}", parsed);
+    let json = parsed.unwrap().1;
+    println!("{:#?}", json.element());
 }
 
 

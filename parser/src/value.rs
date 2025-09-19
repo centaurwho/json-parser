@@ -14,6 +14,10 @@ impl Json {
             element: JsonElement::new(value),
         }
     }
+
+    pub fn element(&self) -> &JsonElement {
+        &self.element
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -24,6 +28,10 @@ pub struct JsonElement {
 impl JsonElement {
     pub fn new(value: JsonValue) -> JsonElement {
         JsonElement { value }
+    }
+
+    pub fn value(&self) -> &JsonValue {
+        &self.value
     }
 }
 
@@ -55,12 +63,51 @@ impl Number {
             exponent,
         }
     }
+
+    pub fn integer(&self) -> i32 {
+        self.integer
+    }
+
+    pub fn fraction(&self) -> Option<&Fraction> {
+        self.fraction.as_ref()
+    }
+
+    pub fn exponent(&self) -> Option<&Exponent> {
+        self.exponent.as_ref()
+    }
+
+    pub fn get_value(&self) -> f64 {
+        let mut value = self.integer as f64;
+        if let Some(fraction) = &self.fraction {
+            value += fraction.to_f64();
+        }
+        if let Some(exponent) = &self.exponent {
+            value *= exponent.to_f64();
+        }
+        value
+    }
 }
 
 // TODO: Change this representation. Storing this as f32 could make more sense. Then the problem is
 //  precision. It may be better to do the conversion when needed.
 #[derive(Debug, Eq, PartialEq)]
 pub struct Fraction(pub u32);
+
+impl Fraction {
+    pub fn new(val: u32) -> Fraction {
+        Fraction(val)
+    }
+
+    pub fn value(&self) -> u32 {
+        self.0
+    }
+
+    pub fn to_f64(&self) -> f64 {
+        let frac_str = format!("{}", self.0);
+        let frac_len = frac_str.len() as u32;
+        self.0 as f64 / 10f64.powi(frac_len as i32)
+    }
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Exponent {
@@ -71,6 +118,17 @@ pub struct Exponent {
 impl Exponent {
     pub fn new(sign: Sign, val: u32) -> Exponent {
         Exponent { sign, val }
+    }
+
+    pub fn sign(&self) -> Sign {
+        self.sign
+    }
+
+    pub fn to_f64(&self) -> f64 {
+        match self.sign {
+            Sign::Plus => 10f64.powi(self.val as i32),
+            Sign::Minus => 10f64.powi(-(self.val as i32)),
+        }
     }
 }
 

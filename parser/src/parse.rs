@@ -4,20 +4,20 @@ use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::{char, one_of, satisfy};
 use nom::combinator::{map, opt, value};
-use nom::IResult;
 use nom::multi::{count, fold_many1, many0, many1, separated_list0};
-use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
+use nom::sequence::{delimited, pair, preceded, separated_pair};
+use nom::{IResult, Parser};
 
 use crate::value::{Exponent, Fraction, Hex, Json, JsonElement, JsonValue, Number, Sign};
 
 // TODO: Custom error handling
 
 pub fn parse(inp: &str) -> IResult<&str, Json> {
-    map(parse_root, |v| Json::new(v))(inp)
+    map(parse_root, |v| Json::new(v)).parse(inp)
 }
 
 fn parse_root(inp: &str) -> IResult<&str, JsonValue> {
-    alt((parse_json_object, parse_json_array))(inp)
+    alt((parse_json_object, parse_json_array)).parse(inp)
 }
 
 fn parse_json_value(inp: &str) -> IResult<&str, JsonValue> {
@@ -29,19 +29,20 @@ fn parse_json_value(inp: &str) -> IResult<&str, JsonValue> {
         parse_null,
         parse_true,
         parse_false,
-    ))(inp)
+    ))
+    .parse(inp)
 }
 
 fn parse_null(inp: &str) -> IResult<&str, JsonValue> {
-    map(tag("null"), |_| JsonValue::Null)(inp)
+    map(tag("null"), |_| JsonValue::Null).parse(inp)
 }
 
 fn parse_true(inp: &str) -> IResult<&str, JsonValue> {
-    map(tag("true"), |_| JsonValue::Boolean(true))(inp)
+    map(tag("true"), |_| JsonValue::Boolean(true)).parse(inp)
 }
 
 fn parse_false(inp: &str) -> IResult<&str, JsonValue> {
-    map(tag("false"), |_| JsonValue::Boolean(false))(inp)
+    map(tag("false"), |_| JsonValue::Boolean(false)).parse(inp)
 }
 
 fn parse_json_object(inp: &str) -> IResult<&str, JsonValue> {
@@ -52,14 +53,16 @@ fn parse_json_object(inp: &str) -> IResult<&str, JsonValue> {
             parse_members,
         )),
         char('}'),
-    )(inp)
+    )
+    .parse(inp)
 }
 
 fn parse_members(inp: &str) -> IResult<&str, JsonValue> {
     map(separated_list0(char(','), parse_member), |e| {
         let obj_map = e.into_iter().collect();
         JsonValue::JsonObject(obj_map)
-    })(inp)
+    })
+    .parse(inp)
 }
 
 fn parse_member(inp: &str) -> IResult<&str, (String, JsonElement)> {
@@ -67,7 +70,8 @@ fn parse_member(inp: &str) -> IResult<&str, (String, JsonElement)> {
         delimited(opt(parse_whitespace), parse_string, opt(parse_whitespace)),
         char(':'),
         parse_element,
-    )(inp)
+    )
+    .parse(inp)
 }
 
 fn parse_json_array(inp: &str) -> IResult<&str, JsonValue> {
@@ -78,13 +82,15 @@ fn parse_json_array(inp: &str) -> IResult<&str, JsonValue> {
             parse_elements,
         )),
         char(']'),
-    )(inp)
+    )
+    .parse(inp)
 }
 
 fn parse_elements(inp: &str) -> IResult<&str, JsonValue> {
     map(separated_list0(char(','), parse_element), |l| {
         JsonValue::JsonArray(l)
-    })(inp)
+    })
+    .parse(inp)
 }
 
 fn parse_element(inp: &str) -> IResult<&str, JsonElement> {
@@ -95,19 +101,20 @@ fn parse_element(inp: &str) -> IResult<&str, JsonElement> {
             opt(parse_whitespace),
         ),
         JsonElement::new,
-    )(inp)
+    )
+    .parse(inp)
 }
 
 fn parse_string(inp: &str) -> IResult<&str, String> {
-    delimited(char('"'), parse_characters, char('"'))(inp)
+    delimited(char('"'), parse_characters, char('"')).parse(inp)
 }
 
 fn parse_characters(inp: &str) -> IResult<&str, String> {
-    map(many0(parse_character), |v| v.into_iter().collect())(inp)
+    map(many0(parse_character), |v| v.into_iter().collect()).parse(inp)
 }
 
 fn parse_character(inp: &str) -> IResult<&str, char> {
-    alt((satisfy(is_valid_char), parse_escaped))(inp)
+    alt((satisfy(is_valid_char), parse_escaped)).parse(inp)
 }
 
 fn is_valid_char(c: char) -> bool {
@@ -130,39 +137,35 @@ fn parse_escaped(inp: &str) -> IResult<&str, char> {
             let code_point = u32::from_str_radix(&s, 16).unwrap();
             char::from_u32(code_point).unwrap()
         }),
-    ))(inp)
+    ))
+    .parse(inp)
 }
 
 fn parse_hex(inp: &str) -> IResult<&str, Hex> {
-    map(alt((parse_digit, one_of("abcdefABCDEF"))), Hex)(inp)
+    map(alt((parse_digit, one_of("abcdefABCDEF"))), Hex).parse(inp)
 }
 
 fn parse_number(inp: &str) -> IResult<&str, JsonValue> {
     map(
-        tuple((parse_integer, opt(parse_fraction), opt(parse_exponent))),
+        (parse_integer, opt(parse_fraction), opt(parse_exponent)),
         |(n, f, exp)| JsonValue::Number(Number::new(n, f, exp)),
-    )(inp)
+    )
+    .parse(inp)
 }
 
 fn parse_integer(inp: &str) -> IResult<&str, i32> {
-    let (inp, sign) = opt(char('-'))(inp)?;
-    let sign_coef: i32 = match sign {
-        Some('-') => -1,
-        _ => 1,
-    };
-    map(
-        alt((
-            map(pair(parse_onenine, parse_digits), |(leading, rest)| {
-                // FIXME: I am not a fan of all these string conversions. Find a better way
-                let mut rest_str = rest.to_string();
-                let leading_str = leading.to_string();
-                rest_str.insert_str(0, &leading_str);
-                rest_str.parse::<u32>().unwrap()
-            }),
-            map(parse_digit, |d: char| d.to_digit(10).unwrap()),
-        )),
-        move |v| (v as i32) * sign_coef,
-    )(inp)
+    let (inp, sign) = opt(char('-')).parse(inp)?;
+    let sign_coef: i32 = if sign.is_some() { -1 } else { 1 };
+    let (inp, value) = alt((
+        map(char('0'), |_| 0i32),
+        map(pair(parse_onenine, many0(parse_digit)), |(first, rest)| {
+            let num = first.to_digit(10).unwrap() as i32;
+            rest.iter()
+                .fold(num, |acc, d| acc * 10 + d.to_digit(10).unwrap() as i32)
+        }),
+    ))
+    .parse(inp)?;
+    Ok((inp, value * sign_coef))
 }
 
 fn parse_digits(inp: &str) -> IResult<&str, u32> {
@@ -170,11 +173,12 @@ fn parse_digits(inp: &str) -> IResult<&str, u32> {
         parse_digit,
         || 0,
         |acc, val: char| acc * 10 + val.to_digit(10).unwrap(),
-    )(inp)
+    )
+    .parse(inp)
 }
 
 fn parse_digit(inp: &str) -> IResult<&str, char> {
-    alt((char('0'), parse_onenine))(inp)
+    alt((char('0'), parse_onenine)).parse(inp)
 }
 
 fn parse_onenine(inp: &str) -> IResult<&str, char> {
@@ -182,7 +186,7 @@ fn parse_onenine(inp: &str) -> IResult<&str, char> {
 }
 
 fn parse_fraction(inp: &str) -> IResult<&str, Fraction> {
-    map(preceded(char('.'), parse_digits), Fraction)(inp)
+    map(preceded(char('.'), parse_digits), Fraction).parse(inp)
 }
 
 fn parse_exponent(inp: &str) -> IResult<&str, Exponent> {
@@ -193,11 +197,12 @@ fn parse_exponent(inp: &str) -> IResult<&str, Exponent> {
         ),
         // Default is Sign::Plus
         |(sign, digits)| Exponent::new(sign.unwrap_or(Sign::Plus), digits),
-    )(inp)
+    )
+    .parse(inp)
 }
 
 fn parse_sign(inp: &str) -> IResult<&str, Sign> {
-    alt((value(Sign::Plus, char('+')), value(Sign::Minus, char('-'))))(inp)
+    alt((value(Sign::Plus, char('+')), value(Sign::Minus, char('-')))).parse(inp)
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -205,14 +210,14 @@ struct WhiteSpace;
 
 fn parse_whitespace(inp: &str) -> IResult<&str, WhiteSpace> {
     let ws_characters: &[char] = &['\u{0020}', '\u{000A}', '\u{000D}', '\u{0009}'];
-    value(WhiteSpace, many1(one_of(ws_characters)))(inp)
+    value(WhiteSpace, many1(one_of(ws_characters))).parse(inp)
 }
 
 #[cfg(test)]
 mod test {
-    use nom::Err;
     use nom::error::ErrorKind;
     use nom::error_position;
+    use nom::Err;
 
     use super::*;
 
@@ -234,10 +239,7 @@ mod test {
         );
         assert_eq!(Ok(("", JsonValue::Null)), parse_null("null"));
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "nonnull",
-                nom::error::ErrorKind::Tag
-            ))),
+            Err(Err::Error(error_position!("nonnull", ErrorKind::Tag))),
             parse_null("nonnull")
         );
     }
@@ -250,10 +252,7 @@ mod test {
         );
         assert_eq!(Ok(("", JsonValue::Boolean(true))), parse_true("true"));
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "false",
-                nom::error::ErrorKind::Tag
-            ))),
+            Err(Err::Error(error_position!("false", ErrorKind::Tag))),
             parse_true("false")
         );
     }
@@ -266,10 +265,7 @@ mod test {
         );
         assert_eq!(Ok(("", JsonValue::Boolean(false))), parse_false("false"));
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "true",
-                nom::error::ErrorKind::Tag
-            ))),
+            Err(Err::Error(error_position!("true", ErrorKind::Tag))),
             parse_false("true")
         );
     }
@@ -376,10 +372,7 @@ mod test {
         assert_eq!(Ok(("BC", Hex('A'))), parse_hex("ABC"));
         assert_eq!(Ok(("6", Hex('2'))), parse_hex("26"));
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "KLM",
-                nom::error::ErrorKind::OneOf
-            ))),
+            Err(Err::Error(error_position!("KLM", ErrorKind::OneOf))),
             parse_hex("KLM")
         );
     }
@@ -387,8 +380,8 @@ mod test {
     #[test]
     fn test_parse_number() {
         assert_eq!(
-            Ok(("", JsonValue::Number(Number::new(56172, None, None)))),
-            parse_number("56172")
+            Ok(("", JsonValue::Number(Number::new(20, None, None)))),
+            parse_number("20")
         );
         assert_eq!(
             Ok((
@@ -416,10 +409,7 @@ mod test {
             parse_number("1.2e+3")
         );
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "notanumber",
-                nom::error::ErrorKind::OneOf
-            ))),
+            Err(Err::Error(error_position!("notanumber", ErrorKind::OneOf))),
             parse_number("notanumber")
         );
     }
@@ -432,7 +422,7 @@ mod test {
         assert_eq!(
             Err(Err::Error(error_position!(
                 "notaninteger",
-                nom::error::ErrorKind::Many1
+                ErrorKind::Many1
             ))),
             parse_digits("notaninteger")
         );
@@ -443,10 +433,7 @@ mod test {
         assert_eq!(Ok(("wow", 345)), parse_digits("345wow"));
         assert_eq!(Ok(("", 2)), parse_digits("0002"));
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "not digits",
-                nom::error::ErrorKind::Many1
-            ))),
+            Err(Err::Error(error_position!("not digits", ErrorKind::Many1))),
             parse_digits("not digits")
         );
     }
@@ -456,10 +443,7 @@ mod test {
         assert_eq!(Ok(("45", '3')), parse_digit("345"));
         assert_eq!(Ok(("002", '0')), parse_digit("0002"));
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "words",
-                nom::error::ErrorKind::OneOf
-            ))),
+            Err(Err::Error(error_position!("words", ErrorKind::OneOf))),
             parse_digit("words")
         );
     }
@@ -469,48 +453,39 @@ mod test {
         assert_eq!(Ok(("", Fraction(24))), parse_fraction(".24"));
         assert_eq!(Ok(("rem", Fraction(1))), parse_fraction(".1rem"));
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "not_frac",
-                nom::error::ErrorKind::Char
-            ))),
+            Err(Err::Error(error_position!("not_frac", ErrorKind::Char))),
             parse_fraction("not_frac")
         );
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "",
-                nom::error::ErrorKind::Many1
-            ))),
+            Err(Err::Error(error_position!("", ErrorKind::Many1))),
             parse_fraction(".")
         );
     }
 
     #[test]
     fn test_parse_exponent() {
-        assert_eq!(Ok(("", Exponent::new(Sign::Plus, 36))), parse_exponent("E+36"));
+        assert_eq!(
+            Ok(("", Exponent::new(Sign::Plus, 36))),
+            parse_exponent("E+36")
+        );
         assert_eq!(
             Ok(("A", Exponent::new(Sign::Minus, 2222))),
             parse_exponent("e-2222A")
         );
-        assert_eq!(Ok(("", Exponent::new(Sign::Plus, 421))), parse_exponent("e421"));
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "A+36",
-                nom::error::ErrorKind::Char
-            ))),
+            Ok(("", Exponent::new(Sign::Plus, 421))),
+            parse_exponent("e421")
+        );
+        assert_eq!(
+            Err(Err::Error(error_position!("A+36", ErrorKind::Char))),
             parse_exponent("A+36")
         );
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "*36",
-                nom::error::ErrorKind::Many1
-            ))),
+            Err(Err::Error(error_position!("*36", ErrorKind::Many1))),
             parse_exponent("e*36")
         );
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "notadigit",
-                nom::error::ErrorKind::Many1
-            ))),
+            Err(Err::Error(error_position!("notadigit", ErrorKind::Many1))),
             parse_exponent("e-notadigit")
         );
     }
@@ -520,10 +495,7 @@ mod test {
         assert_eq!(Ok(("12", Sign::Plus)), parse_sign("+12"));
         assert_eq!(Ok(("12", Sign::Minus)), parse_sign("-12"));
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "12",
-                nom::error::ErrorKind::Char
-            ))),
+            Err(Err::Error(error_position!("12", ErrorKind::Char))),
             parse_sign("12")
         );
     }
@@ -534,10 +506,7 @@ mod test {
         assert_eq!(Ok(("123", WhiteSpace)), parse_whitespace("\t\n   \r123"));
         assert_eq!(Ok(("", WhiteSpace)), parse_whitespace(" "));
         assert_eq!(
-            Err(Err::Error(error_position!(
-                "a",
-                nom::error::ErrorKind::OneOf
-            ))),
+            Err(Err::Error(error_position!("a", ErrorKind::OneOf))),
             parse_whitespace("a")
         );
     }
